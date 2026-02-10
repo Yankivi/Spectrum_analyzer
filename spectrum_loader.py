@@ -24,7 +24,8 @@ def load_and_reconstruct_spectra(file_path):
         B = np.array([p["Points"][0] for p in points])
         y = np.cos(phase) * B + np.sin(phase) * A
         y = -y
-        x = center_field - sweep_width / 2 + i_array * (sweep_width / (N - 1))
+        step = sweep_width / (N - 1) if N > 1 else 0
+        x = center_field - sweep_width / 2 + i_array * step
 
         spectra.append((x, y, os.path.basename(file_path)))
 
