@@ -8,8 +8,9 @@ class EPRApp(wx.Frame):
     def __init__(self, parent, title):
         super(EPRApp, self).__init__(parent, title=title, size=(1500, 1000))
 
-        self.spectra = []  # Список загруженных спектров
-        self.displayed_spectra = []  # Список отображаемых спектров (тех, которые уже отрисованы)
+        self.spectra = []  # Список словарей: {id, x, y, filename}
+        self.displayed_spectra = set()  # Набор id отображаемых спектров
+        self.next_spectrum_id = 1
 
         # Основной макет
         panel = wx.Panel(self)
@@ -21,12 +22,12 @@ class EPRApp(wx.Frame):
         layout.Add(self.load_button, 0, wx.ALL, 5)
 
         # Кнопка для удаления спектра
-        self.delete_button = wx.Button(panel, label="Удалить спектры")
+        self.delete_button = wx.Button(panel, label="Удалить спектр")
         self.delete_button.Bind(wx.EVT_BUTTON, self.delete_spectrum)
         layout.Add(self.delete_button, 0, wx.ALL, 5)
 
-        # Список загруженных спектров (с возможностью мульти-выбора)
-        self.spectrum_list = wx.ListBox(panel, style=wx.LB_MULTIPLE)
+        # Список загруженных спектров (клик по строке переключает отображение)
+        self.spectrum_list = wx.ListBox(panel)
         self.spectrum_list.Bind(wx.EVT_LISTBOX, self.on_select_spectrum)
         layout.Add(self.spectrum_list, 1, flag=wx.EXPAND | wx.ALL, border=5)
 
@@ -45,15 +46,17 @@ class EPRApp(wx.Frame):
         self.Show()
 
     def load_spectrum(self, event):
-        # Фильтр для выбора .json файлов
-        wildcard = "JSON Files (*.json)|*.json|All Files (*.*)|*.*"  # Фильтры для файлов
-        file_dialog = wx.FileDialog(self, "Открыть файл", wildcard=wildcard,
-                                    style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST | wx.FD_MULTIPLE)
+        wildcard = "JSON Files (*.json)|*.json|All Files (*.*)|*.*"
+        file_dialog = wx.FileDialog(
+            self,
+            "Открыть файл",
+            wildcard=wildcard,
+            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST | wx.FD_MULTIPLE,
+        )
 
         if file_dialog.ShowModal() == wx.ID_OK:
-            file_paths = file_dialog.GetPaths()  # Получаем все выбранные файлы
+            file_paths = file_dialog.GetPaths()
 
-            # Загружаем спектры только для выбранных файлов
             for file_path in file_paths:
                 spectra = load_and_reconstruct_spectra(file_path)
                 self.spectra.extend(spectra)
@@ -100,7 +103,6 @@ class EPRApp(wx.Frame):
         self.ax.set_xlabel("Магнитное поле (mT)")
         self.ax.set_ylabel("Интенсивность сигнала (a.u.)")
         self.ax.set_title("ЭПР-спектры")
-        self.ax.legend()
         self.ax.grid(True)
         self.canvas.draw()
 
@@ -116,14 +118,13 @@ class EPRApp(wx.Frame):
         self.replot_selected_spectra(selections)
 
     def delete_spectrum(self, event):
-        # Получаем индексы всех выбранных спектров
-        selections = self.spectrum_list.GetSelections()  # Список всех выбранных элементов
+        selection = self.spectrum_list.GetSelection()
+        if selection == wx.NOT_FOUND or selection >= len(self.spectra):
+            return
 
-        if selections:  # Если есть выбранные спектры
-            # Удаляем спектры из списка
-            for selection in sorted(selections, reverse=True):  # Удаляем по порядку (от последнего к первому)
-                del self.spectra[selection]  # Удаляем спектр из списка
-                self.spectrum_list.Delete(selection)  # Удаляем из списка на экране
+        spectrum_id = self.spectra[selection]["id"]
+        if spectrum_id in self.displayed_spectra:
+            self.displayed_spectra.remove(spectrum_id)
 
             self.update_spectrum_list()  # Обновляем список после удаления
             self.clear_plot()
