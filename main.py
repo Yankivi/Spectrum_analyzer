@@ -1,9 +1,7 @@
 import wx
-import os
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 from spectrum_loader import load_and_reconstruct_spectra  # Импортируем функцию загрузки спектров
-import numpy as np
 
 
 class EPRApp(wx.Frame):
@@ -57,57 +55,65 @@ class EPRApp(wx.Frame):
 
             # Загружаем спектры только для выбранных файлов
             for file_path in file_paths:
-                folder_path = os.path.dirname(file_path)  # Получаем путь к папке с файлом
                 spectra = load_and_reconstruct_spectra(file_path)
                 self.spectra.extend(spectra)
 
             self.update_spectrum_list()
             if self.spectra:
-                self.plot_spectrum(self.spectra[0])  # Отобразить первый спектр
+                # Показываем все загруженные спектры, чтобы не требовать мультивыбор вручную.
+                self.replot_selected_spectra(range(len(self.spectra)))
 
     def update_spectrum_list(self):
         self.spectrum_list.Clear()
         for _, _, filename in self.spectra:
             self.spectrum_list.Append(filename)
 
-    def plot_spectrum(self, spectrum_data):
-        x, y, filename = spectrum_data
-
-        # Проверяем, был ли этот спектр уже отрисован
-        if filename in self.displayed_spectra:
-            # Если спектр уже был на графике, ничего не делаем
-            print(f"Spectra {filename} already displayed.")
-            return
-
-        # Если это новый спектр, добавляем его на график
+    def ensure_canvas(self):
         if self.canvas is None:
-            # Если canvas не был инициализирован, создаём новый график
-            fig, self.ax = plt.subplots(figsize=(8, 5))  # Создаём фигуру и оси
+            fig, self.ax = plt.subplots(figsize=(8, 5))
             self.canvas = FigureCanvas(self.canvas_panel, -1, fig)
+            canvas_layout = wx.BoxSizer(wx.VERTICAL)
+            canvas_layout.Add(self.canvas, 1, wx.EXPAND)
+            self.canvas_panel.SetSizer(canvas_layout)
         else:
-            # Если график уже есть, используем существующие оси
             self.ax = self.canvas.GetFigure().axes[0]
 
-        # Добавляем данные спектра на график
+    def plot_spectrum(self, spectrum_data):
+        x, y, filename = spectrum_data
         self.ax.plot(x, y, label=filename)
+
+    def replot_selected_spectra(self, selections):
+        selections = list(selections)
+        if not selections:
+            self.clear_plot()
+            return
+
+        self.ensure_canvas()
+        self.ax.clear()
+        self.displayed_spectra = []
+
+        for selection in selections:
+            spectrum_data = self.spectra[selection]
+            self.plot_spectrum(spectrum_data)
+            self.displayed_spectra.append(spectrum_data[2])
+
         self.ax.set_xlabel("Магнитное поле (mT)")
         self.ax.set_ylabel("Интенсивность сигнала (a.u.)")
         self.ax.set_title("ЭПР-спектры")
         self.ax.legend()
         self.ax.grid(True)
-
-        # Добавляем спектр в список отображаемых
-        self.displayed_spectra.append(filename)
         self.canvas.draw()
+
+    def clear_plot(self):
+        if self.ax is not None:
+            self.ax.clear()
+            self.canvas.draw()
+        self.displayed_spectra = []
 
     def on_select_spectrum(self, event):
         # Получаем все индексы выбранных спектров
         selections = self.spectrum_list.GetSelections()
-
-        if selections:  # Если есть хотя бы один выбранный спектр
-            for selection in selections:
-                spectrum_data = self.spectra[selection]
-                self.plot_spectrum(spectrum_data)  # Отображаем спектр на том же графике
+        self.replot_selected_spectra(selections)
 
     def delete_spectrum(self, event):
         # Получаем индексы всех выбранных спектров
@@ -120,7 +126,7 @@ class EPRApp(wx.Frame):
                 self.spectrum_list.Delete(selection)  # Удаляем из списка на экране
 
             self.update_spectrum_list()  # Обновляем список после удаления
-            self.displayed_spectra = []  # Очищаем список отображаемых спектров
+            self.clear_plot()
 
 
 if __name__ == '__main__':
