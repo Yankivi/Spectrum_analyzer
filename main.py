@@ -58,15 +58,18 @@ class EPRApp(wx.Frame):
             file_paths = file_dialog.GetPaths()
 
             for file_path in file_paths:
-                loaded = load_and_reconstruct_spectra(file_path)
-                for x, y, filename in loaded:
-                    spectrum_id = self.next_spectrum_id
-                    self.next_spectrum_id += 1
-                    self.spectra.append({"id": spectrum_id, "x": x, "y": y, "filename": filename})
-                    self.displayed_spectra.add(spectrum_id)
+                spectra = load_and_reconstruct_spectra(file_path)
+                self.spectra.extend(spectra)
 
             self.update_spectrum_list()
-            self.render_displayed_spectra()
+            if self.spectra:
+                # Показываем все загруженные спектры, чтобы не требовать мультивыбор вручную.
+                self.replot_selected_spectra(range(len(self.spectra)))
+
+    def update_spectrum_list(self):
+        self.spectrum_list.Clear()
+        for _, _, filename in self.spectra:
+            self.spectrum_list.Append(filename)
 
     def ensure_canvas(self):
         if self.canvas is None:
@@ -78,47 +81,41 @@ class EPRApp(wx.Frame):
         else:
             self.ax = self.canvas.GetFigure().axes[0]
 
-    def update_spectrum_list(self, selected_index=None):
-        self.spectrum_list.Clear()
-        for spectrum in self.spectra:
-            marker = "●" if spectrum["id"] in self.displayed_spectra else "○"
-            self.spectrum_list.Append(f"{marker} {spectrum['filename']}")
+    def plot_spectrum(self, spectrum_data):
+        x, y, filename = spectrum_data
+        self.ax.plot(x, y, label=filename)
 
-        if selected_index is not None and 0 <= selected_index < len(self.spectra):
-            self.spectrum_list.SetSelection(selected_index)
+    def replot_selected_spectra(self, selections):
+        selections = list(selections)
+        if not selections:
+            self.clear_plot()
+            return
 
-    def render_displayed_spectra(self):
         self.ensure_canvas()
         self.ax.clear()
+        self.displayed_spectra = []
 
-        if self.spectra:
-            for spectrum in self.spectra:
-                if spectrum["id"] in self.displayed_spectra:
-                    self.ax.plot(spectrum["x"], spectrum["y"], label=spectrum["filename"])
+        for selection in selections:
+            spectrum_data = self.spectra[selection]
+            self.plot_spectrum(spectrum_data)
+            self.displayed_spectra.append(spectrum_data[2])
 
         self.ax.set_xlabel("Магнитное поле (mT)")
         self.ax.set_ylabel("Интенсивность сигнала (a.u.)")
         self.ax.set_title("ЭПР-спектры")
         self.ax.grid(True)
-
-        if self.displayed_spectra:
-            self.ax.legend()
-
         self.canvas.draw()
 
+    def clear_plot(self):
+        if self.ax is not None:
+            self.ax.clear()
+            self.canvas.draw()
+        self.displayed_spectra = []
+
     def on_select_spectrum(self, event):
-        selection = event.GetSelection()
-        if selection == wx.NOT_FOUND or selection >= len(self.spectra):
-            return
-
-        spectrum_id = self.spectra[selection]["id"]
-        if spectrum_id in self.displayed_spectra:
-            self.displayed_spectra.remove(spectrum_id)
-        else:
-            self.displayed_spectra.add(spectrum_id)
-
-        self.update_spectrum_list(selected_index=selection)
-        self.render_displayed_spectra()
+        # Получаем все индексы выбранных спектров
+        selections = self.spectrum_list.GetSelections()
+        self.replot_selected_spectra(selections)
 
     def delete_spectrum(self, event):
         selection = self.spectrum_list.GetSelection()
@@ -129,9 +126,8 @@ class EPRApp(wx.Frame):
         if spectrum_id in self.displayed_spectra:
             self.displayed_spectra.remove(spectrum_id)
 
-        del self.spectra[selection]
-        self.update_spectrum_list()
-        self.render_displayed_spectra()
+            self.update_spectrum_list()  # Обновляем список после удаления
+            self.clear_plot()
 
 
 if __name__ == '__main__':
