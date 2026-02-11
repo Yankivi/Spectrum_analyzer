@@ -6,56 +6,47 @@ import numpy as np
 def load_and_reconstruct_spectra(file_path):
     spectra = []
 
-    if not os.path.exists(file_path):
-        return spectra
-
-    if not file_path.lower().endswith(".json"):
-        return spectra
+    if not file_path.endswith(".json"):
+        return spectra, "Неподдерживаемый формат файла"
 
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except Exception:
-        return spectra
+    except (OSError, json.JSONDecodeError) as exc:
+        return spectra, f"Ошибка чтения JSON: {exc}"
 
     try:
         common_opts = data["ExperimentOptions"]["CommonOptions"]
-        values_block = data["Values"][0]["Values"]
-    except Exception:
-        return spectra
+        center_field = common_opts.get("CenterMagneticField")
+        sweep_width = common_opts.get("SweepWidth")
+        if center_field is None or sweep_width is None:
+            return spectra, "Отсутствуют CenterMagneticField или SweepWidth"
 
-    n_points = len(values_block)
-    if n_points == 0:
-        return spectra
+        values = data.get("Values") or []
+        if not values or "Values" not in values[0]:
+            return spectra, "Отсутствуют массивы Values"
 
-    phase = data.get("PhaseRadians", 0.0)
-    center_field = common_opts.get("CenterMagneticField")
-    sweep_width = common_opts.get("SweepWidth")
+        points = values[0]["Values"]
+        if not points:
+            return spectra, "В спектре нет точек"
 
-    # Каналы
-    a_values = np.array([p["Points"][1] for p in values_block], dtype=float)
-    b_values = np.array([p["Points"][0] for p in values_block], dtype=float)
+        phase = data.get("PhaseRadians", 0.0)
+        n_points = len(points)
+        i_array = np.arange(n_points)
 
-    # Фазовая реконструкция
-    y = np.cos(phase) * b_values + np.sin(phase) * a_values
-    y = -y
+        a_values = np.array([p["Points"][1] for p in points], dtype=float)
+        b_values = np.array([p["Points"][0] for p in points], dtype=float)
+        y = np.cos(phase) * b_values + np.sin(phase) * a_values
 
-    # Ось поля
-    if sweep_width is not None and center_field is not None and n_points > 1:
-        step = sweep_width / (n_points - 1)
-        x = center_field - sweep_width / 2 + np.arange(n_points) * step
-    else:
-        x = np.arange(n_points)
+        step = sweep_width / (n_points - 1) if n_points > 1 else 0
+        x = center_field - sweep_width / 2 + i_array * step
 
-    # Peak-to-peak
-    peak_to_peak = float(np.max(y) - np.min(y)) if y.size else 0.0
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        return spectra, f"Некорректная структура спектра: {exc}"
 
-    # Noise и SNR
     noise_level = data.get("NoiseLevel")
-    if isinstance(noise_level, (int, float)) and noise_level != 0:
-        snr = peak_to_peak / noise_level
-    else:
-        snr = None
+    signal_level = float(np.max(y) - np.min(y)) if y.size else 0.0
+    snr = signal_level / noise_level if noise_level not in (None, 0) else None
 
     attenuation = None
     mw_parameter = common_opts.get("MwParameter")
@@ -70,10 +61,9 @@ def load_and_reconstruct_spectra(file_path):
         "modulation_amplitude": common_opts.get("ModulationAmplitude"),
         "attenuation": attenuation,
         "noise_level": noise_level,
-        "signal_level": peak_to_peak,   # ← только это поле для формы
+        "signal_level": signal_level,
         "snr": snr,
     }
 
     spectra.append((x, y, os.path.basename(file_path), params))
-
-    return spectra
+    return spectra, None
