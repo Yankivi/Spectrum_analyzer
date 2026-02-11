@@ -13,21 +13,21 @@ class EPRApp(wx.Frame):
         self.next_spectrum_id = 1
 
         panel = wx.Panel(self)
-        layout = wx.BoxSizer(wx.VERTICAL)
+        root_layout = wx.BoxSizer(wx.VERTICAL)
 
         self.load_button = wx.Button(panel, label="Загрузить спектры")
         self.load_button.Bind(wx.EVT_BUTTON, self.load_spectrum)
-        layout.Add(self.load_button, 0, wx.ALL, 5)
+        controls_row.Add(self.load_button, 0, wx.ALL, 5)
 
         self.delete_button = wx.Button(panel, label="Удалить спектр")
         self.delete_button.Bind(wx.EVT_BUTTON, self.delete_spectrum)
-        layout.Add(self.delete_button, 0, wx.ALL, 5)
+        controls_row.Add(self.delete_button, 0, wx.ALL, 5)
 
         # Чекбокс управляет видимостью, клик по строке показывает параметры.
         self.spectrum_list = wx.CheckListBox(panel)
         self.spectrum_list.Bind(wx.EVT_CHECKLISTBOX, self.on_toggle_spectrum)
         self.spectrum_list.Bind(wx.EVT_LISTBOX, self.on_select_spectrum)
-        layout.Add(self.spectrum_list, 1, flag=wx.EXPAND | wx.ALL, border=5)
+        left_col.Add(self.spectrum_list, 1, wx.EXPAND | wx.ALL, 5)
 
         self.canvas_panel = wx.Panel(panel)
         self.canvas = None
@@ -38,7 +38,13 @@ class EPRApp(wx.Frame):
         self.spectrum_info = wx.StaticText(panel, label="Параметры спектра: не выбран")
         layout.Add(self.spectrum_info, 0, wx.ALL, 5)
 
-        panel.SetSizer(layout)
+        params_sizer.Add(self.params_grid, 1, wx.EXPAND | wx.ALL, 8)
+        right_col.Add(params_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 5)
+
+        content_row.Add(right_col, 3, wx.EXPAND)
+        root_layout.Add(content_row, 1, wx.EXPAND)
+
+        panel.SetSizer(root_layout)
         self.Show()
 
     def load_spectrum(self, event):
