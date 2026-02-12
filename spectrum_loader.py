@@ -37,7 +37,6 @@ def load_and_reconstruct_spectra(file_path):
         a_values = np.array([p["Points"][1] for p in points], dtype=float)
         b_values = np.array([p["Points"][0] for p in points], dtype=float)
         y = np.cos(phase) * b_values + np.sin(phase) * a_values
-        y = -y
 
         step = sweep_width / (n_points - 1) if n_points > 1 else 0
         x = center_field - sweep_width / 2 + i_array * step

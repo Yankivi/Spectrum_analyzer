@@ -1,6 +1,8 @@
 import wx
+import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
+from matplotlib.backends.backend_wxagg import NavigationToolbar2WxAgg as NavigationToolbar
 from spectrum_loader import load_and_reconstruct_spectra
 
 
@@ -11,6 +13,12 @@ class EPRApp(wx.Frame):
         self.spectra = []  # Список словарей: {id, x, y, filename, params}
         self.displayed_spectra = set()  # Набор id отображаемых спектров
         self.next_spectrum_id = 1
+        self.toolbar = None
+        self.hover_annotation = None
+        self.hover_threshold_px = 12
+
+        self.CreateStatusBar()
+        self.SetStatusText("Готово")
 
         panel = wx.Panel(self)
         root_layout = wx.BoxSizer(wx.VERTICAL)
@@ -27,6 +35,10 @@ class EPRApp(wx.Frame):
         self.baseline_button = wx.Button(panel, label="Применить базовую линию")
         self.baseline_button.Bind(wx.EVT_BUTTON, self.apply_baseline_to_selected)
         controls_row.Add(self.baseline_button, 0, wx.ALL, 5)
+
+        self.undo_baseline_button = wx.Button(panel, label="Отменить базовую линию")
+        self.undo_baseline_button.Bind(wx.EVT_BUTTON, self.undo_baseline_for_selected)
+        controls_row.Add(self.undo_baseline_button, 0, wx.ALL, 5)
         root_layout.Add(controls_row, 0, wx.LEFT | wx.RIGHT | wx.TOP, 5)
 
         content_row = wx.BoxSizer(wx.HORIZONTAL)
@@ -66,6 +78,7 @@ class EPRApp(wx.Frame):
             ("noise_level", "Noise level"),
             ("signal_level", "Signal level"),
             ("snr", "SNR"),
+            ("baseline_status", "Baseline correction"),
         ]
 
         for key, title in self.param_order:
@@ -105,7 +118,15 @@ class EPRApp(wx.Frame):
                     spectrum_id = self.next_spectrum_id
                     self.next_spectrum_id += 1
                     self.spectra.append(
-                        {"id": spectrum_id, "x": x, "y": y.copy(), "raw_y": y.copy(), "filename": filename, "params": params}
+                        {
+                            "id": spectrum_id,
+                            "x": x,
+                            "y": y.copy(),
+                            "raw_y": y.copy(),
+                            "filename": filename,
+                            "params": params,
+                            "baseline_applied": False,
+                        }
                     )
                     self.displayed_spectra.add(spectrum_id)
 
@@ -128,8 +149,15 @@ class EPRApp(wx.Frame):
         if self.canvas is None:
             self.figure, self.ax = plt.subplots(figsize=(8, 5))
             self.canvas = FigureCanvas(self.canvas_panel, -1, self.figure)
+
+            self.toolbar = NavigationToolbar(self.canvas)
+            self.toolbar.Realize()
+
+            self.canvas.mpl_connect("motion_notify_event", self.on_plot_hover)
+
             canvas_layout = wx.BoxSizer(wx.VERTICAL)
             canvas_layout.Add(self.canvas, 1, wx.EXPAND)
+            canvas_layout.Add(self.toolbar, 0, wx.EXPAND)
             self.canvas_panel.SetSizer(canvas_layout)
             self.canvas_panel.Layout()
             return
@@ -143,10 +171,71 @@ class EPRApp(wx.Frame):
             else:
                 self.ax = self.figure.add_subplot(111)
 
+    def hide_hover_details(self):
+        if self.hover_annotation is not None and self.hover_annotation.get_visible():
+            self.hover_annotation.set_visible(False)
+            self.canvas.draw_idle()
+        self.SetStatusText("Готово")
+
+    def setup_hover_annotation(self):
+        self.hover_annotation = self.ax.annotate(
+            "",
+            xy=(0, 0),
+            xytext=(10, 10),
+            textcoords="offset points",
+            bbox={"boxstyle": "round,pad=0.3", "fc": "white", "alpha": 0.85},
+        )
+        self.hover_annotation.set_visible(False)
+
+    def on_plot_hover(self, event):
+        if self.canvas is None or self.ax is None or self.hover_annotation is None:
+            return
+
+        if event.inaxes != self.ax or event.x is None or event.y is None:
+            self.hide_hover_details()
+            return
+
+        closest = None
+        closest_distance = None
+
+        for line in self.ax.get_lines():
+            x_data = np.asarray(line.get_xdata(), dtype=float)
+            y_data = np.asarray(line.get_ydata(), dtype=float)
+            if x_data.size == 0:
+                continue
+
+            points_pixels = self.ax.transData.transform(np.column_stack((x_data, y_data)))
+            deltas = points_pixels - np.array([event.x, event.y])
+            dist2 = np.einsum("ij,ij->i", deltas, deltas)
+            idx = int(np.argmin(dist2))
+            current_distance = float(np.sqrt(dist2[idx]))
+
+            if closest is None or current_distance < closest_distance:
+                closest = (line, idx)
+                closest_distance = current_distance
+
+        if closest is None or closest_distance is None or closest_distance > self.hover_threshold_px:
+            self.hide_hover_details()
+            return
+
+        line, idx = closest
+        x_value = float(line.get_xdata()[idx])
+        y_value = float(line.get_ydata()[idx])
+        label = line.get_label()
+
+        self.hover_annotation.xy = (x_value, y_value)
+        self.hover_annotation.set_text(f"{label}\nX: {x_value:.3f}\nY: {y_value:.3f}")
+        self.hover_annotation.set_visible(True)
+        self.SetStatusText(f"{label} | X={x_value:.3f}, Y={y_value:.3f}")
+        self.canvas.draw_idle()
+
     def update_spectrum_list(self, selected_index=None):
         self.spectrum_list.Clear()
         for index, spectrum in enumerate(self.spectra):
-            self.spectrum_list.Append(spectrum["filename"])
+            title = spectrum["filename"]
+            if spectrum.get("baseline_applied"):
+                title += " [BL]"
+            self.spectrum_list.Append(title)
             self.spectrum_list.Check(index, spectrum["id"] in self.displayed_spectra)
 
         if selected_index is not None and 0 <= selected_index < len(self.spectra):
@@ -168,6 +257,9 @@ class EPRApp(wx.Frame):
         if self.displayed_spectra:
             self.ax.legend()
 
+        self.setup_hover_annotation()
+        self.SetStatusText("Готово")
+
         self.canvas.draw()
 
     def format_param(self, value, precision=3):
@@ -183,6 +275,8 @@ class EPRApp(wx.Frame):
         params = spectrum.get("params", {})
         for key, _ in self.param_order:
             value = params.get(key)
+            if key == "baseline_status":
+                value = "Applied" if spectrum.get("baseline_applied") else "Not applied"
             precision = 0 if key == "points" else 3
             self.param_labels[key].SetLabel(self.format_param(value, precision=precision))
         self.Layout()
@@ -240,8 +334,33 @@ class EPRApp(wx.Frame):
 
         baseline = y[0] + (y[-1] - y[0]) * (x - x[0]) / (x[-1] - x[0]) if x[-1] != x[0] else y[0]
         spectrum["y"] = y - baseline
+        spectrum["baseline_applied"] = True
 
         self.update_signal_metrics(spectrum)
+        self.update_spectrum_list(selected_index=selection)
+        self.render_displayed_spectra()
+        self.show_spectrum_info(spectrum)
+
+    def undo_baseline_for_selected(self, event):
+        selection = self.spectrum_list.GetSelection()
+        if selection == wx.NOT_FOUND or selection >= len(self.spectra):
+            wx.MessageBox("Сначала выберите спектр в списке.", "Нет выбранного спектра", wx.OK | wx.ICON_INFORMATION)
+            return
+
+        spectrum = self.spectra[selection]
+        if not spectrum.get("baseline_applied"):
+            wx.MessageBox(
+                "Для выбранного спектра базовая линия ещё не применялась.",
+                "Отмена не требуется",
+                wx.OK | wx.ICON_INFORMATION,
+            )
+            return
+
+        spectrum["y"] = spectrum["raw_y"].copy()
+        spectrum["baseline_applied"] = False
+
+        self.update_signal_metrics(spectrum)
+        self.update_spectrum_list(selected_index=selection)
         self.render_displayed_spectra()
         self.show_spectrum_info(spectrum)
 
